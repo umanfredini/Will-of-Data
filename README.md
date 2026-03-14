@@ -1,11 +1,13 @@
-# GrandLine-Guard: One Piece Spoiler Classifier 🏴‍☠️
+# Will of Data: One Piece Grid Logic & Rarity Predictor 🏴‍☠️📊
 
-Questo progetto mira a realizzare un classificatore di Machine Learning per identificare spoiler 
-riguardanti l'opera "One Piece", basandosi sul progresso dell'utente.
+## 🎯 Obiettivo
+Sviluppo di un sistema di Machine Learning in grado di risolvere una griglia di attributi (One Piece Grid Game) ottimizzando la scelta del personaggio in base a criteri di pertinenza, rarità statistica e importanza narrativa.
 
-## Indice del Report
-1. [cite_start]**Scenario**: Analisi del problema degli spoiler in una saga ultra-decennale[cite: 12].
-2. [cite_start]**Dataset**: Descrizione dei dati estratti (es. Reddit, MyAnimeList).
-3. [cite_start]**Design**: Tecniche di NLP e modelli scelti (SVM, Random Forest o BERT)[cite: 14].
-4. [cite_start]**Performance**: Analisi dei risultati e metriche (Accuracy, F1-Score)[cite: 15].
-5. [cite_start]**Conclusioni**: Sviluppi futuri (estensione ad altre saghe o immagini)[cite: 16].
+## 🛠️ Pipeline di ML
+1. **Data Engineering**: Gestione missing values ("Incerto") e feature encoding.
+2. **Preprocessing**: Bilanciamento tramite Undersampling per preservare l'autenticità dei dati.
+3. **Modeling**: Confronto tra classificatori (Random Forest vs XGBoost) per la predizione degli attributi.
+4. **Scoring Engine**: Algoritmo di ranking basato su Distanza Probabilistica e Grado di Importanza.
+
+## 📂 Dataset
+Il dataset comprende personaggi del mondo di One Piece caratterizzati da fazioni, poteri (Frutti), Haki e taglie.
