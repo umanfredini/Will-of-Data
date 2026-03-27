@@ -27,4 +27,5 @@ dataprocessed_.csv
 Thumbs.db
 
 # Models
+models/
 .pkl
