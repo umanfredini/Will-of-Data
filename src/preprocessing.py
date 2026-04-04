@@ -30,7 +30,7 @@ def preprocess():
 
     # 4. Dummy Encoding (One-Hot) per le nuove feature
     categorical_cols = ['Fazione', 'Tipo_Frutto', 'Razza', 'Ruolo']
-    df_final = pd.get_dummies(df, columns=categorical_cols, prefix=['Fac', 'Fruit', 'Race', 'Role'])
+    df_final = pd.get_dummies(df, columns=categorical_cols, prefix=['Fac', 'Fruit', 'Race', 'Role'], dtype=int)
 
     # 5. Pulizia
     df_final = df_final.drop(['Haki_List', 'Grado_Importanza'], axis=1)
