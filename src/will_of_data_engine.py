@@ -25,19 +25,27 @@ class WillOfDataEngine:
         self.features = joblib.load(os.path.join(base_dir, 'models', 'features.pkl'))
 
     def map_col(self, c):
-        mapping = {
-            'Senza_Frutto': 'Fruit_Nessuno', 'Senza_Haki': 'Senza_Haki',
-            'Ha_Frutto': 'Ha_Frutto', 'Nessuno': 'Fruit_Nessuno'
+        # Mappature dirette per nomi che non seguono lo standard One-Hot
+        direct_mapping = {
+            'Senza_Frutto': 'Fruit_Nessuno',
+            'Senza_Haki': 'Senza_Haki',
+            'Ha_Frutto': 'Ha_Frutto',
+            'Possiede_la_D': 'Possiede_la_D'
         }
-        if c in mapping: return mapping[c]
-        for p in ['Fac_', 'Fruit_', 'Haki_', 'Taglia_']:
-            if p + c in self.df_proc.columns: return p + c
+        if c in direct_mapping: return direct_mapping[c]
+
+        # Cerca tra i prefissi generati dal preprocessor
+        for prefix in ['Fac_', 'Fruit_', 'Haki_', 'Taglia_', 'Race_', 'Role_']:
+            if prefix + c in self.df_proc.columns:
+                return prefix + c
+
+        # Fallback se il criterio è già il nome esatto della colonna
         return c if c in self.df_proc.columns else None
 
-    def get_best_match(self, c1, c2, top_n=30):
+    def get_best_match(self, c1, c2, top_n=30, rarity_boost_weight=0.6):
         """
-        Calcola il miglior match applicando una penalità ai falsi positivi
-        per bilanciare l'intuizione del ML con la coerenza del dataset.
+        Versione Avanzata: Calcola il match combinando Probabilità ML,
+        Rarità della combinazione e Rarity Score del personaggio.
         """
         k1 = self.map_col(c1)
         k2 = self.map_col(c2)
@@ -47,51 +55,66 @@ class WillOfDataEngine:
 
         X = self.df_proc[self.features]
 
-        # 1. Recupero delle probabilità dai modelli specialistici
+        # 1. RECUPERO PROBABILITÀ (Supporta Modelli Categorici e Flag Binari)
         def get_prob(key):
-            # Controlla se la chiave appartiene a uno dei target dei modelli
+            # Per Fazione, Frutto e Potenza usiamo i modelli Random Forest
             for category in ['fazione', 'frutto', 'potenza']:
                 if key in self.classes[category]:
                     idx = self.classes[category].index(key)
                     return self.models[category].predict_proba(X)[:, idx]
-            # Se è un flag binario non gestito dai modelli (es. Ha_Frutto),
-            # usiamo il valore della colonna stessa
-            return self.df_proc[key].values.astype(float)
+
+            # Per Razza, Ruolo e Flag (D., Ha_Frutto) usiamo i dati binari
+            # Se la colonna esiste nel DF processato, la usiamo come probabilità 1.0 o 0.0
+            if key in self.df_proc.columns:
+                return self.df_proc[key].values.astype(float)
+            return np.zeros(len(self.df_proc))
 
         prob1 = get_prob(k1)
         prob2 = get_prob(k2)
 
-        # 2. Calcolo della rarità globale della combinazione
-        # Serve a dare più punti a chi risolve celle difficili
+        # 2. CALCOLO RARITÀ GLOBALE (Difficoltà della cella)
         match_mask = (self.df_proc[k1] == 1) & (self.df_proc[k2] == 1)
         match_count = match_mask.sum()
-        rarity_weight = 1 / (match_count + 1)
+        global_rarity = 1 / (match_count + 1)
 
         results = []
         for i, row in self.df_proc.iterrows():
-            # DETERMINAZIONE DEI FILTRI RIGIDI
-            # Se uno dei criteri è una Fazione, il personaggio DEVE appartenervi (Filtro Hard)
-            is_faction_crit_1 = k1.startswith('Fac_')
-            is_faction_crit_2 = k2.startswith('Fac_')
-
+            # --- FILTRI HARD (Fazioni) ---
+            # Se chiediamo una fazione, il personaggio deve farne parte matematicamente
             fazione_ok = True
-            if is_faction_crit_1 and row[k1] == 0: fazione_ok = False
-            if is_faction_crit_2 and row[k2] == 0: fazione_ok = False
+            if k1.startswith('Fac_') and row[k1] == 0: fazione_ok = False
+            if k2.startswith('Fac_') and row[k2] == 0: fazione_ok = False
 
-            # Se la fazione è sbagliata, lo score è 0. Fine dei giochi per Doflamingo-Marine.
             if not fazione_ok:
                 continue
 
-            # Se la fazione è corretta, usiamo le probabilità ML per trovare il "miglior match"
-            # Ad esempio: tra tutti i Marine, chi ha il profilo più simile a un "Veterano"?
-            score = (prob1[i] * prob2[i]) * rarity_weight
+            # --- CALCOLO SCORE ML BASE ---
+            ml_confidence = float(prob1[i] * prob2[i])
 
-            if score > 0.001:
+            # --- INTEGRAZIONE RARITY SCORE (Lore-Based) ---
+            # Recuperiamo l'importanza dal dataset RAW (1-10)
+            char_raw = self.df_raw[self.df_raw['Nome'] == row['Nome']].iloc[0]
+            importanza = char_raw['Grado_Importanza']
+
+            # Formula: Grado 1 (molto raro) -> Boost 1.0 | Grado 10 (Luffy) -> Boost 0.1
+            char_rarity_factor = (11 - importanza) / 10
+
+            # Lo score finale premia chi ha bassa importanza (Rarity Boost)
+            # Final Score = ML * (1 + Peso * FattoreRarità) * RaritàCella
+            total_score = ml_confidence * (1 + rarity_boost_weight * char_rarity_factor) * global_rarity
+
+            if total_score > 0.0001:
                 results.append({
                     'Personaggio': row['Nome'],
-                    'Score': float(score),
-                    'Confidenza_ML': float(prob1[i] * prob2[i])
+                    'Score': total_score,
+                    'Confidenza_ML': ml_confidence,
+                    'Rarity_Level': char_rarity_factor  # Per il pannello Audit
                 })
+
+        # 3. ORDINAMENTO FINALE
+        results.sort(key=lambda x: x['Score'], reverse=True)
+
+        return results[:top_n]
 
         # Ordinamento per score decrescente
         return sorted(results, key=lambda x: x['Score'], reverse=True)[:top_n]
