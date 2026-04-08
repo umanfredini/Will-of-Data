@@ -43,28 +43,19 @@ class WillOfDataEngine:
         return c if c in self.df_proc.columns else None
 
     def get_best_match(self, c1, c2, top_n=30, rarity_boost_weight=0.6):
-        """
-        Versione Avanzata: Calcola il match combinando Probabilità ML,
-        Rarità della combinazione e Rarity Score del personaggio.
-        """
         k1 = self.map_col(c1)
         k2 = self.map_col(c2)
 
-        if not k1 or not k2:
-            return []
+        if not k1 or not k2: return []
 
         X = self.df_proc[self.features]
 
-        # 1. RECUPERO PROBABILITÀ (Supporta Modelli Categorici e Flag Binari)
+        # Recupero probabilità dai modelli
         def get_prob(key):
-            # Per Fazione, Frutto e Potenza usiamo i modelli Random Forest
             for category in ['fazione', 'frutto', 'potenza']:
                 if key in self.classes[category]:
                     idx = self.classes[category].index(key)
                     return self.models[category].predict_proba(X)[:, idx]
-
-            # Per Razza, Ruolo e Flag (D., Ha_Frutto) usiamo i dati binari
-            # Se la colonna esiste nel DF processato, la usiamo come probabilità 1.0 o 0.0
             if key in self.df_proc.columns:
                 return self.df_proc[key].values.astype(float)
             return np.zeros(len(self.df_proc))
@@ -72,52 +63,41 @@ class WillOfDataEngine:
         prob1 = get_prob(k1)
         prob2 = get_prob(k2)
 
-        # 2. CALCOLO RARITÀ GLOBALE (Difficoltà della cella)
+        # Rarità della cella
         match_mask = (self.df_proc[k1] == 1) & (self.df_proc[k2] == 1)
         match_count = match_mask.sum()
         global_rarity = 1 / (match_count + 1)
 
         results = []
         for i, row in self.df_proc.iterrows():
-            # --- FILTRI HARD (Fazioni) ---
-            # Se chiediamo una fazione, il personaggio deve farne parte matematicamente
+            # --- HARD CONSTRAINT (INAMOVIBILE) ---
             fazione_ok = True
             if k1.startswith('Fac_') and row[k1] == 0: fazione_ok = False
             if k2.startswith('Fac_') and row[k2] == 0: fazione_ok = False
 
+            # Se non rispetta i criteri, il personaggio viene eliminato subito
             if not fazione_ok:
                 continue
 
-            # --- CALCOLO SCORE ML BASE ---
             ml_confidence = float(prob1[i] * prob2[i])
 
-            # --- INTEGRAZIONE RARITY SCORE (Lore-Based) ---
-            # Recuperiamo l'importanza dal dataset RAW (1-10)
+            # Se l'IA non vede alcuna connessione, scartiamo (Soglia minima di decenza)
+            if ml_confidence <= 0:
+                continue
+
             char_raw = self.df_raw[self.df_raw['Nome'] == row['Nome']].iloc[0]
-            importanza = char_raw['Grado_Importanza']
-
-            # Formula: Grado 1 (molto raro) -> Boost 1.0 | Grado 10 (Luffy) -> Boost 0.1
-            char_rarity_factor = (11 - importanza) / 10
-
-            # Lo score finale premia chi ha bassa importanza (Rarity Boost)
-            # Final Score = ML * (1 + Peso * FattoreRarità) * RaritàCella
+            char_rarity_factor = (11 - char_raw['Grado_Importanza']) / 10
             total_score = ml_confidence * (1 + rarity_boost_weight * char_rarity_factor) * global_rarity
 
-            if total_score > 0.0001:
-                results.append({
-                    'Personaggio': row['Nome'],
-                    'Score': total_score,
-                    'Confidenza_ML': ml_confidence,
-                    'Rarity_Level': char_rarity_factor  # Per il pannello Audit
-                })
+            results.append({
+                'Personaggio': row['Nome'],
+                'Score': total_score,
+                'Confidenza_ML': ml_confidence,
+                'Rarity_Level': char_rarity_factor
+            })
 
-        # 3. ORDINAMENTO FINALE
         results.sort(key=lambda x: x['Score'], reverse=True)
-
         return results[:top_n]
-
-        # Ordinamento per score decrescente
-        return sorted(results, key=lambda x: x['Score'], reverse=True)[:top_n]
 
     def get_character_info_full(self, name):
         """Restituisce sia i dati RAW che quelli PROCESSATI per un controllo incrociato."""

@@ -63,10 +63,7 @@ class WillOfDataApp:
             'frutti': ['Ha_Frutto', 'Senza_Frutto']
         }
 
-        # 1. Scegliamo le righe
         self.rows = random.sample(self.pool, 3)
-
-        # 2. Filtriamo le colonne per evitare conflitti di famiglia
         famiglie_usate = []
         for r in self.rows:
             for nome, membri in famiglie.items():
@@ -75,33 +72,35 @@ class WillOfDataApp:
         pool_colonne = []
         for c in self.pool:
             famiglia_c = next((f for f, membri in famiglie.items() if c in membri), None)
-            # Evita duplicati esatti e membri della stessa famiglia (es. no Rookie vs Elite)
             if c not in self.rows and famiglia_c not in famiglie_usate:
                 pool_colonne.append(c)
 
         self.cols = random.sample(pool_colonne, 3)
+
+        # --- NUOVA LOGICA DI STATO DELLE CELLE ---
         self.grid_results = [[None for _ in range(3)] for _ in range(3)]
-        self.used_names = set()
+        self.cell_matches = [[[] for _ in range(3)] for _ in range(3)]  # Salva tutti i risultati possibili
+        self.cell_clicks = [[0 for _ in range(3)] for _ in range(3)]  # Conta i click per cella
 
     def solve_cell(self, r, c):
-        """Tenta di risolvere la cella. Se non trova nulla, segna 'EMPTY'."""
+        """Implementazione Modulo: Cicla i risultati senza mai mostrare X se esiste almeno un match."""
         try:
-            # Cerchiamo i match
-            matches = self.engine.get_best_match(self.rows[r], self.cols[c], top_n=50)
+            # 1. Se è la prima volta che clicchiamo, carichiamo tutti i match possibili
+            if not self.cell_matches[r][c]:
+                matches = self.engine.get_best_match(self.rows[r], self.cols[c], top_n=50)
+                self.cell_matches[r][c] = matches
 
-            if matches:
-                for m in matches:
-                    if m['Personaggio'] not in self.used_names:
-                        # Rimuoviamo il vecchio nome se esisteva
-                        if isinstance(self.grid_results[r][c], dict):
-                            self.used_names.discard(self.grid_results[r][c]['Personaggio'])
+            self.cell_clicks[r][c] += 1
+            all_matches = self.cell_matches[r][c]
 
-                        self.grid_results[r][c] = m
-                        self.used_names.add(m['Personaggio'])
-                        return
-
-            # Se arriviamo qui, non è stato trovato nessun match valido
-            self.grid_results[r][c] = "EMPTY"
+            if all_matches:
+                # 2. Usiamo il MODULO per restare sempre dentro la lista dei risultati
+                # index = (click - 1) % lunghezza_lista
+                idx = (self.cell_clicks[r][c] - 1) % len(all_matches)
+                self.grid_results[r][c] = all_matches[idx]
+            else:
+                # Mostra X solo se l'engine non ha trovato proprio nulla
+                self.grid_results[r][c] = "EMPTY"
 
         except Exception as e:
             print(f"⚠️ Solve error: {e}")
@@ -112,7 +111,6 @@ class WillOfDataApp:
         pygame.draw.rect(self.screen, PARCHMENT, (30, 30, 1140, 740), border_radius=15)
         self.draw_txt("📜 THE WILL OF DATA MAP", 60, 50, color=INK)
 
-        # Labels
         for i in range(3):
             c_label = self.cols[i].replace("Senza_", "No ").replace("Possiede_la_", "")
             r_label = self.rows[i].replace("Senza_", "No ").replace("Possiede_la_", "")
@@ -132,20 +130,16 @@ class WillOfDataApp:
                 res = self.grid_results[r][c]
 
                 if isinstance(res, dict):
-                    # Personaggio trovato
                     self.draw_txt(res['Personaggio'], rect.centerx, rect.centery, True)
                     if is_hover: hover_data = (res, r, c)
                 elif res == "EMPTY":
-                    # Nessun match trovato: Mostra una X rossa
                     self.draw_txt("X", rect.centerx, rect.centery, True, color=RED_SEAL, font=self.font_title)
                     if is_hover: hover_data = ("EMPTY", r, c)
                 else:
-                    # Cella non ancora cliccata
                     self.draw_txt("?", rect.centerx, rect.centery, True, color=(180, 170, 160))
 
         self.draw_audit_log(*hover_data if hover_data else (None, 0, 0))
 
-        # Bottoni
         for btn, txt, col in [(self.solve_btn, "SET SAIL", WOOD), (self.clear_btn, "BURN MAP", RED_SEAL)]:
             pygame.draw.rect(self.screen, col, btn, border_radius=10)
             self.draw_txt(txt, btn.centerx, btn.centery, True, color=GOLD if col == WOOD else WHITE)
@@ -173,16 +167,13 @@ class WillOfDataApp:
         data = self.engine.get_character_info_full(res['Personaggio'])
         raw, proc = data['raw'], data['proc']
 
-        # SCALING DELLA CONFIDENZA: Trasformiamo i valori bassi in percentuali leggibili
-        # Un 15% (0.15) viene scalato per apparire come un 75-80% se è il top del modello
         raw_score = res['Confidenza_ML']
-        visual_score = min((raw_score / 0.20) * 100, 100)  # 0.20 è il nostro target di "certezza massima"
+        visual_score = min((raw_score / 0.20) * 100, 100)
 
         px, py = self.audit_panel.x + 20, 100
         self.draw_txt(raw['Nome'].upper(), px, py, color=RED_SEAL)
         self.draw_txt(f"AI Confidence: {visual_score:.1f}%", px, py + 30, font=self.font_small)
 
-        # Validazione Criteri (Ora include Ruoli e Razze)
         y_check = py + 75
         self.draw_txt("■ CRITERI VERIFICATI:", px, y_check, font=self.font_bold_small)
         for crit in [self.rows[r], self.cols[c]]:
@@ -194,7 +185,6 @@ class WillOfDataApp:
             self.draw_txt("OK" if is_ok else "ERR", self.audit_panel.right - 50, y_check, font=self.font_small,
                           color=color)
 
-        # Info Raw Estese
         y_raw = y_check + 45
         pygame.draw.rect(self.screen, INK, (px, y_raw, 260, 1))
         self.draw_txt("■ SCHEDA LORE:", px, y_raw + 15, font=self.font_bold_small)
