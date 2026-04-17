@@ -55,7 +55,7 @@ class WillOfDataApp:
         self.setup_game()
 
     def setup_game(self):
-        """Smart Sampler 3.0: Gestione famiglie escludenti per evitare griglie impossibili."""
+        """Inizializzazione griglia con reset del registro nomi usati."""
         famiglie = {
             'fazioni': ['Pirata', 'Marine', 'Rivoluzionario', 'Civile', 'Governo Mondiale'],
             'taglie': ['Rookie', 'Veterano', 'Elite'],
@@ -77,29 +77,49 @@ class WillOfDataApp:
 
         self.cols = random.sample(pool_colonne, 3)
 
-        # --- NUOVA LOGICA DI STATO DELLE CELLE ---
+        # --- STATO DELLE CELLE ---
         self.grid_results = [[None for _ in range(3)] for _ in range(3)]
-        self.cell_matches = [[[] for _ in range(3)] for _ in range(3)]  # Salva tutti i risultati possibili
-        self.cell_clicks = [[0 for _ in range(3)] for _ in range(3)]  # Conta i click per cella
+        self.cell_matches = [[[] for _ in range(3)] for _ in range(3)]
+        self.cell_clicks = [[0 for _ in range(3)] for _ in range(3)]
+
+        # FIX: Registro globale dei nomi attualmente visibili sulla griglia
+        self.used_names = set()
 
     def solve_cell(self, r, c):
-        """Implementazione Modulo: Cicla i risultati senza mai mostrare X se esiste almeno un match."""
+        """Trova il miglior match garantendo l'unicità sulla griglia."""
         try:
-            # 1. Se è la prima volta che clicchiamo, carichiamo tutti i match possibili
+            # 1. Caricamento iniziale dei match se la lista è vuota
             if not self.cell_matches[r][c]:
                 matches = self.engine.get_best_match(self.rows[r], self.cols[c], top_n=50)
                 self.cell_matches[r][c] = matches
 
-            self.cell_clicks[r][c] += 1
             all_matches = self.cell_matches[r][c]
+            if not all_matches:
+                self.grid_results[r][c] = "EMPTY"
+                return
 
-            if all_matches:
-                # 2. Usiamo il MODULO per restare sempre dentro la lista dei risultati
-                # index = (click - 1) % lunghezza_lista
-                idx = (self.cell_clicks[r][c] - 1) % len(all_matches)
-                self.grid_results[r][c] = all_matches[idx]
+            # 2. Liberiamo il nome precedentemente occupato da QUESTA cella
+            current_res = self.grid_results[r][c]
+            if isinstance(current_res, dict):
+                self.used_names.discard(current_res['Personaggio'])
+
+            # 3. Cerchiamo il prossimo personaggio disponibile che non sia usato in ALTRE celle
+            # Filtriamo la lista escludendo i nomi già presenti in self.used_names
+            available_matches = [m for m in all_matches if m['Personaggio'] not in self.used_names]
+
+            if available_matches:
+                # Incrementiamo il contatore click per questa cella
+                self.cell_clicks[r][c] += 1
+
+                # Usiamo il modulo sulla lista dei SOLI disponibili per evitare duplicati
+                idx = (self.cell_clicks[r][c] - 1) % len(available_matches)
+                new_match = available_matches[idx]
+
+                # Registriamo il nuovo nome e aggiorniamo la griglia
+                self.grid_results[r][c] = new_match
+                self.used_names.add(new_match['Personaggio'])
             else:
-                # Mostra X solo se l'engine non ha trovato proprio nulla
+                # Se tutti i 50 match sono già usati altrove (raro), mettiamo EMPTY o il primo
                 self.grid_results[r][c] = "EMPTY"
 
         except Exception as e:
