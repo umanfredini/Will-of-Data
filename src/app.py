@@ -35,13 +35,13 @@ class WillOfDataApp:
 
         self.fase = "TITOLO"
 
-        # Pool aggiornato con le nuove feature
+        # Pool aggiornato
         self.pool = [
             'Pirata', 'Marine', 'Rivoluzionario', 'Civile', 'Governo Mondiale',
             'Armatura', 'Imperatore', 'Percezione', 'Senza_Haki',
             'Ha_Frutto', 'Senza_Frutto', 'Possiede_la_D',
             'Rookie', 'Veterano', 'Elite',
-            'Spadaccino', 'Capitano', 'Medico',
+            'Spadaccino', 'Capitano', 'Comandante', 'Ufficiale',
             'Umano', 'Uomo-Pesce', 'Animale', 'Angelo', 'Gigante'
         ]
 
@@ -55,7 +55,7 @@ class WillOfDataApp:
         self.setup_game()
 
     def setup_game(self):
-        """Inizializzazione griglia con reset del registro nomi usati."""
+        """Inizializzazione con Smart Sampler e reset registro nomi."""
         famiglie = {
             'fazioni': ['Pirata', 'Marine', 'Rivoluzionario', 'Civile', 'Governo Mondiale'],
             'taglie': ['Rookie', 'Veterano', 'Elite'],
@@ -77,54 +77,73 @@ class WillOfDataApp:
 
         self.cols = random.sample(pool_colonne, 3)
 
-        # --- STATO DELLE CELLE ---
         self.grid_results = [[None for _ in range(3)] for _ in range(3)]
         self.cell_matches = [[[] for _ in range(3)] for _ in range(3)]
         self.cell_clicks = [[0 for _ in range(3)] for _ in range(3)]
-
-        # FIX: Registro globale dei nomi attualmente visibili sulla griglia
         self.used_names = set()
 
     def solve_cell(self, r, c):
-        """Trova il miglior match garantendo l'unicità sulla griglia."""
+        """Risoluzione singola cella con controllo unicità."""
         try:
-            # 1. Caricamento iniziale dei match se la lista è vuota
             if not self.cell_matches[r][c]:
-                matches = self.engine.get_best_match(self.rows[r], self.cols[c], top_n=50)
-                self.cell_matches[r][c] = matches
+                self.cell_matches[r][c] = self.engine.get_best_match(self.rows[r], self.cols[c], top_n=50)
 
             all_matches = self.cell_matches[r][c]
             if not all_matches:
                 self.grid_results[r][c] = "EMPTY"
                 return
 
-            # 2. Liberiamo il nome precedentemente occupato da QUESTA cella
-            current_res = self.grid_results[r][c]
-            if isinstance(current_res, dict):
-                self.used_names.discard(current_res['Personaggio'])
+            # Libera il vecchio nome
+            current = self.grid_results[r][c]
+            if isinstance(current, dict):
+                self.used_names.discard(current['Personaggio'])
 
-            # 3. Cerchiamo il prossimo personaggio disponibile che non sia usato in ALTRE celle
-            # Filtriamo la lista escludendo i nomi già presenti in self.used_names
-            available_matches = [m for m in all_matches if m['Personaggio'] not in self.used_names]
+            # Cerca il prossimo disponibile
+            available = [m for m in all_matches if m['Personaggio'] not in self.used_names]
 
-            if available_matches:
-                # Incrementiamo il contatore click per questa cella
+            if available:
                 self.cell_clicks[r][c] += 1
-
-                # Usiamo il modulo sulla lista dei SOLI disponibili per evitare duplicati
-                idx = (self.cell_clicks[r][c] - 1) % len(available_matches)
-                new_match = available_matches[idx]
-
-                # Registriamo il nuovo nome e aggiorniamo la griglia
+                idx = (self.cell_clicks[r][c] - 1) % len(available)
+                new_match = available[idx]
                 self.grid_results[r][c] = new_match
                 self.used_names.add(new_match['Personaggio'])
             else:
-                # Se tutti i 50 match sono già usati altrove (raro), mettiamo EMPTY o il primo
                 self.grid_results[r][c] = "EMPTY"
-
         except Exception as e:
             print(f"⚠️ Solve error: {e}")
             self.grid_results[r][c] = "EMPTY"
+
+    def smart_solve_all(self):
+        """Smart Solver: Risolve prima le intersezioni più rare (Constraint Satisfaction)."""
+        self.used_names = set()
+        all_coords = [(r, c) for r in range(3) for c in range(3)]
+
+        # 1. Raccolta match per priorità
+        cell_data = []
+        for r, c in all_coords:
+            matches = self.engine.get_best_match(self.rows[r], self.cols[c], top_n=50)
+            self.cell_matches[r][c] = matches
+            cell_data.append({
+                'coord': (r, c),
+                'count': len(matches) if matches else 0,
+                'matches': matches
+            })
+
+        # 2. Ordina: prima le celle con meno candidati (più difficili)
+        cell_data.sort(key=lambda x: x['count'] if x['count'] > 0 else 999)
+
+        # 3. Assegnazione atomica
+        for info in cell_data:
+            r, c = info['coord']
+            available = [m for m in info['matches'] if m['Personaggio'] not in self.used_names]
+
+            if available:
+                best = available[0]
+                self.grid_results[r][c] = best
+                self.used_names.add(best['Personaggio'])
+                self.cell_clicks[r][c] = 1
+            else:
+                self.grid_results[r][c] = "EMPTY"
 
     def draw_game(self):
         self.screen.fill(WOOD)
@@ -148,7 +167,6 @@ class WillOfDataApp:
                 pygame.draw.rect(self.screen, INK, rect, 1, border_radius=8)
 
                 res = self.grid_results[r][c]
-
                 if isinstance(res, dict):
                     self.draw_txt(res['Personaggio'], rect.centerx, rect.centery, True)
                     if is_hover: hover_data = (res, r, c)
@@ -167,26 +185,21 @@ class WillOfDataApp:
     def draw_audit_log(self, res, r, c):
         pygame.draw.rect(self.screen, PARCHMENT, self.audit_panel, border_radius=12)
         pygame.draw.rect(self.screen, INK, self.audit_panel, 2, border_radius=12)
-
         header = pygame.Rect(self.audit_panel.x, self.audit_panel.y, self.audit_panel.width, 40)
         pygame.draw.rect(self.screen, INK, header, border_top_left_radius=12, border_top_right_radius=12)
         self.draw_txt("⚓ AUDIT LOG", header.centerx, header.centery, True, color=GOLD, font=self.font_bold_small)
 
         if not res:
-            self.draw_txt("Esplora la mappa...", self.audit_panel.centerx, 150, True, color=(140, 130, 120),
-                          font=self.font_small)
+            self.draw_txt("Esplora la mappa...", self.audit_panel.centerx, 150, True, font=self.font_small)
             return
 
         if res == "EMPTY":
             self.draw_txt("Nessun match trovato", self.audit_panel.centerx, 150, True, color=RED_SEAL,
                           font=self.font_bold_small)
-            self.draw_txt("L'intersezione dei criteri", self.audit_panel.centerx, 180, True, font=self.font_small)
-            self.draw_txt("è vuota nel dataset.", self.audit_panel.centerx, 200, True, font=self.font_small)
             return
 
         data = self.engine.get_character_info_full(res['Personaggio'])
         raw, proc = data['raw'], data['proc']
-
         raw_score = res['Confidenza_ML']
         visual_score = min((raw_score / 0.20) * 100, 100)
 
@@ -194,32 +207,52 @@ class WillOfDataApp:
         self.draw_txt(raw['Nome'].upper(), px, py, color=RED_SEAL)
         self.draw_txt(f"AI Confidence: {visual_score:.1f}%", px, py + 30, font=self.font_small)
 
+        # Validazione Criteri Dinamica
         y_check = py + 75
         self.draw_txt("■ CRITERI VERIFICATI:", px, y_check, font=self.font_bold_small)
         for crit in [self.rows[r], self.cols[c]]:
             y_check += 32
-            mapped = self.engine.map_col(crit)
-            is_ok = proc.get(mapped) == 1
+            is_ok = False
+            if crit in ['Rookie', 'Veterano', 'Elite']:
+                b_str, imp = str(raw['Bounty']), raw['Grado_Importanza']
+                if b_str == "Incerto" or b_str == "0":
+                    if imp >= 9:
+                        actual = "Elite"
+                    elif imp >= 7:
+                        actual = "Veterano"
+                    else:
+                        actual = "Rookie"
+                else:
+                    try:
+                        b_num = int(b_str)
+                        if b_num >= 1000000000:
+                            actual = "Elite"
+                        elif b_num >= 100000000:
+                            actual = "Veterano"
+                        else:
+                            actual = "Rookie"
+                    except:
+                        actual = "Rookie"
+                is_ok = (crit == actual)
+            elif crit in ['Comandante', 'Ufficiale']:
+                is_ok = (raw['Ruolo'] == crit)
+            else:
+                mapped = self.engine.map_col(crit)
+                is_ok = proc.get(mapped) == 1
+
             color = MINT_GREEN if is_ok else RED_SEAL
             self.draw_txt(f"• {crit[:14]}:", px, y_check, font=self.font_small)
-            self.draw_txt("OK" if is_ok else "ERR", self.audit_panel.right - 50, y_check, font=self.font_small,
+            self.draw_txt("OK" if is_ok else "NO", self.audit_panel.right - 50, y_check, font=self.font_small,
                           color=color)
 
+        # Scheda Lore
         y_raw = y_check + 45
         pygame.draw.rect(self.screen, INK, (px, y_raw, 260, 1))
         self.draw_txt("■ SCHEDA LORE:", px, y_raw + 15, font=self.font_bold_small)
-
-        info_lines = [
-            f"Fazione: {raw['Fazione']}",
-            f"Ruolo:   {raw['Ruolo']}",
-            f"Razza:   {raw['Razza']}",
-            f"Taglia:  {raw['Bounty']}",
-            f"Frutto:  {raw['Tipo_Frutto']}",
-            f"Eredità: {'Volontà della D.' if raw['Possiede_la_D'] else 'Comune'}"
-        ]
-
+        info = [f"Fazione: {raw['Fazione']}", f"Ruolo:   {raw['Ruolo']}", f"Razza:   {raw['Razza']}",
+                f"Taglia:  {raw['Bounty']}", f"Frutto:  {raw['Tipo_Frutto']}"]
         y_raw += 45
-        for line in info_lines:
+        for line in info:
             self.draw_txt(line, px, y_raw, font=self.font_small)
             y_raw += 22
 
@@ -241,11 +274,8 @@ class WillOfDataApp:
                             for r in range(3):
                                 for c in range(3):
                                     if self.cells[r][c].collidepoint(e.pos): self.solve_cell(r, c)
-                            if self.solve_btn.collidepoint(e.pos):
-                                for r in range(3):
-                                    for c in range(3): self.solve_cell(r, c)
+                            if self.solve_btn.collidepoint(e.pos): self.smart_solve_all()
                             if self.clear_btn.collidepoint(e.pos): self.setup_game()
-
                 if self.fase == "TITOLO":
                     self.screen.fill(WOOD)
                     self.draw_txt("WILL OF DATA", 600, 350, True, color=GOLD, font=self.font_title)
